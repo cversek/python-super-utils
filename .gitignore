@@ -1,0 +1,106 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environment
+.env/
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python virtual environment metadata
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing / coverage reports
+.coverage
+.tox/
+.nox/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Sphinx documentation
+docs/_build/
+docs/build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm IDE
+.idea/
+
+# VS Code IDE
+.vscode/
+*.code-workspace
+
+# macOS files
+.DS_Store
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.bak
+*.~*
+
+# Editor backups
+*~
+# Emacs
+*#
+
+# Generated examples and outputs
+examples/__pycache__/
+examples/*.pyc
+
+# Ignore wheel and editable builds
+*.whl
+*.editable
+
+# Local project-specific settings
+local_settings.py
+
+# Build artifacts
+*.pyo
+*.pyd
+*.dll
+
+# Logs
+logs/
+*.log
+
+# GitHub Actions cache
+.cache/
+
+# Ignore setuptools and pip artifacts
+__pycache__/
+*.egg-info/
+*.eggs/
+
+# Ignore pyproject.toml cache
+*.pyproject.toml.lock
