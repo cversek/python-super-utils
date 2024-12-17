@@ -18,21 +18,33 @@ import inspect
 
 class TaggedFormatter(logging.Formatter):
     """
-    Custom formatter to include module and function name tags in log records.
-
-    Example Output:
-    ---------------
-    [module_name.function_name] DEBUG: This is a debug message.
+    Custom formatter to include the module and function name tags 
+    from the *outermost caller* in user code.
     """
     def format(self, record):
-        # Find the caller frame (3 frames up)
-        caller_frame = inspect.getouterframes(inspect.currentframe())[3]
-        module_name = caller_frame.frame.f_globals.get("__name__", "__main__")
-        function_name = caller_frame.function
+        # Traverse the call stack and skip over internal logging frames
+        stack = inspect.stack()
+        caller_frame = None
 
-        # Add the tag to the record
+        for frame_info in stack:
+            module_name = frame_info.frame.f_globals.get("__name__", "__main__")
+            # Skip frames from the logging system and this custom formatter
+            if not (module_name.startswith("logging") or module_name.startswith("super_utils.logging")):
+                caller_frame = frame_info
+                break
+
+        # If a caller frame is found, extract module and function
+        if caller_frame:
+            module_name = caller_frame.frame.f_globals.get("__name__", "__main__")
+            function_name = caller_frame.function
+        else:
+            module_name = "__unknown__"
+            function_name = "__unknown__"
+
+        # Add the tag to the log record
         record.tag = f"[{module_name}.{function_name}]"
         return super().format(record)
+    
 
 def setup_tagged_logger(name=None, level=logging.DEBUG):
     """
@@ -49,11 +61,6 @@ def setup_tagged_logger(name=None, level=logging.DEBUG):
     --------
     logging.Logger
         Configured logger instance.
-
-    Example:
-    --------
-    >>> logger = setup_tagged_logger()
-    >>> logger.debug("This is a tagged debug message")
     """
     logger = logging.getLogger(name or __name__)
     logger.setLevel(level)
