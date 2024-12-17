@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-super-utils"
+version = "0.1.0"
+description = "A utility package for debugging and tagged logging."
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [
+    { name = "Craig Versek", email = "cversek@gmail.com" }
+]
+license = { text = "MIT License" }
+keywords = ["debugging", "logging", "utilities"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Debugging",
+]
+dependencies = [
+    "IPython>=7.0",
+    "nest_asyncio>=1.5",
+    "matplotlib>=3.0",
+]
+
+[project.urls]
+"Source" = "https://github.com/cversek/python-super-utils"
+"Tracker" = "https://github.com/cversek/python-super-utils/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["super_utils*"]
