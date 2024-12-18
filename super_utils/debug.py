@@ -12,14 +12,18 @@ Functions:
 - DEBUG_EMBED: Embed an IPython shell for debugging.
 - DEBUG_PLOTS_NONBLOCKING: Show Matplotlib plots in a non-blocking way.
 """
+# standard imports
+import sys, logging, traceback, inspect, datetime
+from inspect import currentframe
 
-import sys
-import logging
-import traceback
-import inspect
+# third party imports
 import IPython
 import nest_asyncio
-from inspect import currentframe
+import rich
+from rich.console import Console
+from rich.traceback import Traceback
+
+
 
 def DEBUG_TAG(frame, msg=None, tag_name = "DEBUG", include_fileinfo=True):
     """
@@ -63,6 +67,42 @@ def DEBUG_PRINT_EXCEPTION():
     print('*' * 40)
     print(tag)
     print('*' * 40)
+
+
+def DEBUG_PRINT_EXCEPTION(log_file=None):
+    """
+    Print a visually enhanced traceback for the most recent exception.
+
+    Parameters:
+    -----------
+    log_file : str, optional
+        If provided, the traceback is also saved to the specified log file.
+
+    Example:
+    --------
+    try:
+        1 / 0
+    except:
+        DEBUG_PRINT_EXCEPTION(log_file="errors.log")
+    """
+    # Create a rich console
+    console = Console()
+
+    # Capture the exception details
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+
+    # Render the traceback using rich
+    console.print("*"*40)
+    console.print(Traceback.from_exception(exc_type, exc_value, exc_traceback))
+    console.print("*"*40)
+
+    # Optionally log to a file
+    if log_file:
+        with open(log_file, "a") as f:
+            f.write(f"--- Exception Logged on {datetime.datetime.now()} ---\n")
+            traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
+            f.write("\n")
+
 
 
 def DEBUG_EMBED(local_ns, global_ns=None, exit=False, force_tty=False):
