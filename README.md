@@ -92,40 +92,21 @@ Output:
 ****************************************
 ```
 
-Example: DEBUG_EMBED
+Example: DEBUG_BREAKPOINT
 Drop into an IPython shell with the current namespace for live debugging.
 ```python
-from super_utils.debug import DEBUG_EMBED
+from super_utils.debug import DEBUG_BREAKPOINT
 
 global_variable = "Hello, Global Debug!"
 
 def interactive_debug():
     local_variable = "Hello, Local Debug!"
-    DEBUG_EMBED(local_ns=locals(), global_ns=globals())
+    DEBUG_BREAKPOINT()
 
 interactive_debug()
 ```
-Note: We have to capture the namespaces manually.  The `global_ns` argument is optional and can be omitted if you only need to debug local variables.
+Note: both global and local variables are available in the IPython shell.
 
-**Power User Tip:**
-This multi-statement line is the most common way to use the debugging tools:
-```python
-DEBUG_TAG(currentframe());DEBUG_EMBED(local_ns=locals(),global_ns=globals(),exit=True)
-```
-  The exit=True argument will exit the program after the shell is closed.  I like to copy/paste this liberally into my code, and comment out the lines I don't need.  Here's an example:    
-
-
-```python
-from super_utils.debug import DEBUG_TAG, DEBUG_EMBED
-
-def interactive_debug():
-    a = 1
-    b = 2
-    DEBUG_TAG(currentframe());DEBUG_EMBED(local_ns=locals(),global_ns=globals(),exit=True)
-    print("This should not be printed")
-
-interactive_debug()
-```
 
 ### Tagged Logging
 Example: Tagged Logs

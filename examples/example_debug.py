@@ -9,6 +9,7 @@ from super_utils.debug import (
     DEBUG_TAG,
     DEBUG_PRINT_EXCEPTION,
     DEBUG_EMBED,
+    DEBUG_BREAKPOINT,
     DEBUG_PLOTS_NONBLOCKING,
 )
 from inspect import currentframe
@@ -33,6 +34,7 @@ def demo_debug_print_exception():
     except:
         DEBUG_PRINT_EXCEPTION()
 
+global_var = "I'm a global variable in the IPython shell!"
 
 def demo_debug_embed():
     """
@@ -41,6 +43,17 @@ def demo_debug_embed():
     print("\n--- Example: DEBUG_EMBED ---")
     local_var = "I'm a local variable in the IPython shell!"
     DEBUG_EMBED(local_ns=locals(), global_ns=globals(), exit=False)
+
+
+def demo_debug_breakpoint():
+    """
+    Demonstrate DEBUG_BREAKPOINT functionality.
+    """
+    print("\n--- Example: DEBUG_BREAKPOINT ---")
+    x = 42
+    y = "hello world"
+    DEBUG_BREAKPOINT("Check the state of x,y,global_var")
+    print("After the breakpoint")
 
 
 def demo_debug_plots():
@@ -57,4 +70,5 @@ if __name__ == "__main__":
     demo_debug_tag()
     demo_debug_print_exception()
     demo_debug_embed()
+    demo_debug_breakpoint()
     demo_debug_plots()

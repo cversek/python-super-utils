@@ -21,7 +21,7 @@ import IPython
 import nest_asyncio
 from inspect import currentframe
 
-def DEBUG_TAG(frame, msg=None):
+def DEBUG_TAG(frame, msg=None, tag_name = "DEBUG", include_fileinfo=True):
     """
     Print a debug tag including file name, line number, and an optional message.
 
@@ -37,7 +37,9 @@ def DEBUG_TAG(frame, msg=None):
     >>> DEBUG_TAG(currentframe(), "Debugging start point")
     """
     info = inspect.getframeinfo(frame)
-    tag = f"*** DEBUG ***\n*** \tL#{info.lineno} in '{info.filename}'"
+    tag = f"*** {tag_name} ***"
+    if include_fileinfo:
+        tag += f"\n*** \tL#{info.lineno} in '{info.filename}'"
     if msg is not None:
         tag += f": {msg}"
     print('*' * 40)
@@ -101,6 +103,29 @@ def DEBUG_EMBED(local_ns, global_ns=None, exit=False, force_tty=False):
 
     if exit:
         sys.exit()
+
+def DEBUG_BREAKPOINT(message=None, force_tty=False, exit=False):
+    """
+    Drop into an interactive IPython shell with contextual debugging information.
+
+    Parameters:
+    -----------
+    message : str, optional
+        An optional message to display alongside the debug tag.
+    force_tty : bool, optional
+        Force TTY mode for IPython shell (default: False).
+    exit : bool, optional
+        Exit the program after the IPython shell (default: False).
+    """
+    # Retrieve the current frame (caller of DEBUG_BREAKPOINT)
+    frame = inspect.currentframe().f_back
+
+    # Print the debug tag (file name, line number, optional message)
+    DEBUG_TAG(frame, msg=message, tag_name="DEBUG_BREAKPOINT")
+
+    # Launch IPython shell with the local and global namespaces
+    DEBUG_EMBED(local_ns=frame.f_locals, global_ns=frame.f_globals, exit=exit, force_tty=force_tty)
+
 
 
 def DEBUG_PLOTS_NONBLOCKING(do_prompt=False):
