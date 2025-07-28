@@ -51,24 +51,6 @@ def DEBUG_TAG(frame, msg=None, tag_name = "DEBUG", include_fileinfo=True):
     print('*' * 40)
 
 
-def DEBUG_PRINT_EXCEPTION():
-    """
-    Print the formatted traceback for the most recent exception.
-
-    Example:
-    --------
-    try:
-        1 / 0
-    except:
-        DEBUG_PRINT_EXCEPTION()
-    """
-    exc = traceback.format_exc()
-    tag = f"*** EXCEPTION ***\n*** \n\t{exc}"
-    print('*' * 40)
-    print(tag)
-    print('*' * 40)
-
-
 def DEBUG_PRINT_EXCEPTION(log_file=None):
     """
     Print a visually enhanced traceback for the most recent exception.
