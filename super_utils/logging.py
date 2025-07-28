@@ -67,7 +67,7 @@ def setup_tagged_logger(name=None, level=logging.DEBUG):
 
     if not logger.handlers:  # Avoid duplicate handlers
         handler = logging.StreamHandler()
-        formatter = TaggedFormatter("%(tag)s %(levelname)s: %(message)s")
+        formatter = TaggedFormatter("%(asctime)s %(tag)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 
