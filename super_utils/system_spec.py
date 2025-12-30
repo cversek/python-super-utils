@@ -2,16 +2,26 @@
 system_spec.py
 ==============
 
-System specification utilities for capturing hardware, OS, compiler, and
-numerical backend information. Enables reproducible benchmarking by recording
-the exact system configuration under which performance measurements were taken.
+Cross-platform system specification utilities for capturing hardware, OS,
+compiler, and numerical backend information. Enables reproducible benchmarking
+by recording the exact system configuration under which performance
+measurements were taken.
+
+Supports Linux (x86_64, aarch64) and macOS (Intel, Apple Silicon).
 
 Functions:
 ----------
+Core:
 - get_system_spec: Capture comprehensive system specification.
-- get_hardware_spec: Hardware info (CPU, memory, architecture).
+- get_hardware_spec: Hardware info (CPU, memory, architecture) - cross-platform.
 - get_compiler_spec: Compiler and Cython configuration.
 - get_numpy_spec: NumPy and BLAS backend info.
+
+Platform-specific (detailed topology):
+- get_apple_silicon_info: Apple M-series details (P/E cores, cache hierarchy).
+- get_linux_cpu_info: Linux CPU topology (sockets, threads, cache).
+
+Output:
 - print_system_report: Rich-formatted console display.
 - export_system_spec: Save specification to JSON file.
 """
@@ -34,7 +44,392 @@ from rich.panel import Panel
 
 # Module-level cache for expensive operations
 _cached_spec: Optional[Dict[str, Any]] = None
-_spec_version = "1.0"
+_spec_version = "1.1"  # Added macOS Apple Silicon + Linux enhanced detection
+
+
+# =============================================================================
+# Platform-specific helpers
+# =============================================================================
+
+def _run_sysctl(key: str) -> Optional[str]:
+    """
+    Run sysctl -n <key> and return the value (macOS/BSD).
+
+    Args:
+        key: sysctl key (e.g., 'machdep.cpu.brand_string')
+
+    Returns:
+        Value string or None if unavailable
+    """
+    try:
+        result = subprocess.run(
+            ['sysctl', '-n', key],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        pass
+    return None
+
+
+def _get_macos_hardware_spec() -> Dict[str, Any]:
+    """
+    Get hardware specification on macOS using sysctl.
+
+    Returns:
+        Dict with CPU, memory, and architecture info.
+    """
+    info = {
+        "cpu_model": None,
+        "cpu_vendor": "Apple" if platform.machine() == "arm64" else None,
+        "cpu_cores_physical": None,
+        "cpu_cores_logical": None,
+        "cpu_frequency_mhz": None,
+        "cpu_features": [],
+        "cpu_cache_kb": None,
+        "memory_total_gb": None,
+        "memory_available_gb": None,
+        "architecture": platform.machine(),
+    }
+
+    # CPU model
+    brand = _run_sysctl('machdep.cpu.brand_string')
+    if brand:
+        info["cpu_model"] = brand
+
+    # Core counts
+    logical = _run_sysctl('hw.ncpu')
+    if logical:
+        info["cpu_cores_logical"] = int(logical)
+
+    physical = _run_sysctl('hw.physicalcpu')
+    if physical:
+        info["cpu_cores_physical"] = int(physical)
+
+    # Memory (hw.memsize returns bytes)
+    memsize = _run_sysctl('hw.memsize')
+    if memsize:
+        mem_bytes = int(memsize)
+        info["memory_total_gb"] = round(mem_bytes / (1024**3), 2)
+
+    # CPU frequency (not available on Apple Silicon, but try)
+    freq = _run_sysctl('hw.cpufrequency')
+    if freq:
+        info["cpu_frequency_mhz"] = round(int(freq) / 1_000_000, 1)
+
+    # Cache size (L2 or L3 depending on availability)
+    # Try L3 first, then L2
+    for cache_key in ['hw.l3cachesize', 'hw.l2cachesize']:
+        cache = _run_sysctl(cache_key)
+        if cache and int(cache) > 0:
+            info["cpu_cache_kb"] = int(cache) // 1024
+            break
+
+    # CPU features on macOS/ARM64
+    if platform.machine() == "arm64":
+        info["cpu_features"] = ["neon", "fp16", "dotprod"]  # Standard ARM64 features
+    else:
+        # Intel Mac - try to get features
+        features = _run_sysctl('machdep.cpu.features')
+        if features:
+            all_features = features.lower().split()
+            relevant = ['sse', 'sse2', 'sse3', 'ssse3', 'sse4_1', 'sse4_2',
+                       'avx', 'avx2', 'avx512f', 'fma']
+            info["cpu_features"] = [f for f in all_features if f in relevant]
+
+    return info
+
+
+def get_apple_silicon_info() -> Optional[Dict[str, Any]]:
+    """
+    Get Apple Silicon specific information.
+
+    Returns None on non-Apple Silicon platforms.
+    Returns dict with M-series specific details on Apple Silicon:
+        - chip_name: Full chip name (e.g., "Apple M3 Max")
+        - generation: M-series generation (e.g., "M3")
+        - variant: Chip variant (e.g., "Max", "Pro", "Ultra", or None for base)
+        - performance_cores: Number of performance (P) cores
+        - efficiency_cores: Number of efficiency (E) cores
+        - cache_performance: Dict with L1I, L1D, L2 sizes for P-cores (bytes)
+        - cache_efficiency: Dict with L1I, L1D, L2 sizes for E-cores (bytes)
+        - cache_line_bytes: Cache line size
+        - is_rosetta: True if running under Rosetta translation
+
+    Example:
+        >>> info = get_apple_silicon_info()
+        >>> if info:
+        ...     print(f"{info['chip_name']}: {info['performance_cores']}P + {info['efficiency_cores']}E")
+        Apple M3 Max: 12P + 4E
+    """
+    # Check if macOS and ARM64
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return None
+
+    info = {
+        "chip_name": None,
+        "generation": None,
+        "variant": None,
+        "performance_cores": None,
+        "efficiency_cores": None,
+        "cache_performance": {},
+        "cache_efficiency": {},
+        "cache_line_bytes": None,
+        "is_rosetta": False,
+    }
+
+    # Chip name and generation
+    brand = _run_sysctl('machdep.cpu.brand_string')
+    if brand:
+        info["chip_name"] = brand
+
+        # Parse generation (M1, M2, M3, M4, etc.)
+        for gen in ['M4', 'M3', 'M2', 'M1']:
+            if gen in brand:
+                info["generation"] = gen
+                break
+
+        # Parse variant
+        brand_upper = brand.upper()
+        if 'ULTRA' in brand_upper:
+            info["variant"] = "Ultra"
+        elif 'MAX' in brand_upper:
+            info["variant"] = "Max"
+        elif 'PRO' in brand_upper:
+            info["variant"] = "Pro"
+        # else: base model, variant = None
+
+    # Performance cores (perflevel0)
+    perf = _run_sysctl('hw.perflevel0.physicalcpu')
+    if perf:
+        info["performance_cores"] = int(perf)
+
+    # Efficiency cores (perflevel1)
+    eff = _run_sysctl('hw.perflevel1.physicalcpu')
+    if eff:
+        info["efficiency_cores"] = int(eff)
+
+    # Cache line size
+    cache_line = _run_sysctl('hw.cachelinesize')
+    if cache_line:
+        info["cache_line_bytes"] = int(cache_line)
+
+    # Performance core caches
+    for key, sysctl_key in [
+        ('l1i', 'hw.perflevel0.l1icachesize'),
+        ('l1d', 'hw.perflevel0.l1dcachesize'),
+        ('l2', 'hw.perflevel0.l2cachesize'),
+    ]:
+        val = _run_sysctl(sysctl_key)
+        if val:
+            info["cache_performance"][key] = int(val)
+
+    # Efficiency core caches
+    for key, sysctl_key in [
+        ('l1i', 'hw.perflevel1.l1icachesize'),
+        ('l1d', 'hw.perflevel1.l1dcachesize'),
+        ('l2', 'hw.perflevel1.l2cachesize'),
+    ]:
+        val = _run_sysctl(sysctl_key)
+        if val:
+            info["cache_efficiency"][key] = int(val)
+
+    # Rosetta detection
+    rosetta = _run_sysctl('sysctl.proc_translated')
+    if rosetta:
+        info["is_rosetta"] = rosetta == '1'
+
+    return info
+
+
+def _parse_lscpu() -> Dict[str, Any]:
+    """
+    Parse lscpu output for detailed CPU topology (Linux).
+
+    Returns richer info than /proc/cpuinfo on modern systems.
+    """
+    info = {}
+    try:
+        result = subprocess.run(
+            ['lscpu'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if ':' not in line:
+                    continue
+                key, value = line.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+
+                if key == 'Vendor ID':
+                    info['vendor'] = value
+                elif key == 'Model name':
+                    info['model_name'] = value
+                elif key == 'CPU(s)':
+                    info['cpus_total'] = int(value)
+                elif key == 'Thread(s) per core':
+                    info['threads_per_core'] = int(value)
+                elif key == 'Core(s) per socket':
+                    info['cores_per_socket'] = int(value)
+                elif key == 'Socket(s)':
+                    try:
+                        info['sockets'] = int(value)
+                    except ValueError:
+                        pass
+                elif key == 'CPU max MHz':
+                    info['max_mhz'] = float(value)
+                elif key == 'CPU min MHz':
+                    info['min_mhz'] = float(value)
+                elif key == 'L1d cache':
+                    info['l1d_cache'] = value
+                elif key == 'L1i cache':
+                    info['l1i_cache'] = value
+                elif key == 'L2 cache':
+                    info['l2_cache'] = value
+                elif key == 'L3 cache':
+                    info['l3_cache'] = value
+                elif key == 'Flags':
+                    info['flags'] = value.split()
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        pass
+    return info
+
+
+def _get_linux_cache_from_sysfs() -> Dict[str, Any]:
+    """
+    Get cache information from /sys/devices/system/cpu (Linux).
+
+    Returns detailed cache hierarchy when available.
+    """
+    cache_info = {}
+    try:
+        # Check cpu0's cache directory
+        cache_base = '/sys/devices/system/cpu/cpu0/cache'
+        if os.path.exists(cache_base):
+            import glob
+            for cache_dir in sorted(glob.glob(f'{cache_base}/index*')):
+                try:
+                    with open(f'{cache_dir}/level', 'r') as f:
+                        level = f.read().strip()
+                    with open(f'{cache_dir}/type', 'r') as f:
+                        cache_type = f.read().strip()
+                    with open(f'{cache_dir}/size', 'r') as f:
+                        size = f.read().strip()
+
+                    key = f'L{level}_{cache_type[0].lower()}'  # e.g., L1_d, L2_u
+                    cache_info[key] = size
+                except (FileNotFoundError, IOError):
+                    pass
+    except Exception:
+        pass
+    return cache_info
+
+
+def get_linux_cpu_info() -> Optional[Dict[str, Any]]:
+    """
+    Get detailed Linux CPU information (topology, cache, features).
+
+    Returns None on non-Linux platforms.
+    Returns dict with Linux-specific CPU details:
+        - vendor: CPU vendor (Intel, AMD, ARM, etc.)
+        - model_name: Full model name
+        - sockets: Number of physical sockets
+        - cores_per_socket: Cores per socket
+        - threads_per_core: Hyperthreading/SMT threads per core
+        - total_cores: Physical core count
+        - total_threads: Logical CPU count
+        - cache: Dict with L1d, L1i, L2, L3 sizes
+        - features: Performance-relevant CPU flags
+        - is_hybrid: True if Intel hybrid (P/E cores) detected
+        - max_mhz: Maximum frequency if available
+        - architecture: x86_64, aarch64, etc.
+
+    Example:
+        >>> info = get_linux_cpu_info()
+        >>> if info:
+        ...     print(f"{info['model_name']}: {info['total_cores']}C/{info['total_threads']}T")
+        Intel(R) Core(TM) i7-10700K: 8C/16T
+    """
+    if platform.system() != "Linux":
+        return None
+
+    info = {
+        "vendor": None,
+        "model_name": None,
+        "sockets": None,
+        "cores_per_socket": None,
+        "threads_per_core": None,
+        "total_cores": None,
+        "total_threads": None,
+        "cache": {},
+        "features": [],
+        "is_hybrid": False,
+        "max_mhz": None,
+        "architecture": platform.machine(),
+    }
+
+    # Try lscpu first (richer data)
+    lscpu = _parse_lscpu()
+    if lscpu:
+        info["vendor"] = lscpu.get('vendor')
+        info["model_name"] = lscpu.get('model_name')
+        info["sockets"] = lscpu.get('sockets')
+        info["cores_per_socket"] = lscpu.get('cores_per_socket')
+        info["threads_per_core"] = lscpu.get('threads_per_core')
+        info["total_threads"] = lscpu.get('cpus_total')
+        info["max_mhz"] = lscpu.get('max_mhz')
+
+        # Calculate total physical cores
+        if info["sockets"] and info["cores_per_socket"]:
+            info["total_cores"] = info["sockets"] * info["cores_per_socket"]
+        elif info["total_threads"] and info["threads_per_core"]:
+            info["total_cores"] = info["total_threads"] // info["threads_per_core"]
+
+        # Cache from lscpu
+        for key in ['l1d_cache', 'l1i_cache', 'l2_cache', 'l3_cache']:
+            if key in lscpu:
+                cache_key = key.replace('_cache', '').upper()
+                info["cache"][cache_key] = lscpu[key]
+
+        # Features - filter to performance-relevant
+        if 'flags' in lscpu:
+            relevant = {'sse', 'sse2', 'sse3', 'ssse3', 'sse4_1', 'sse4_2',
+                       'avx', 'avx2', 'avx512f', 'avx512vl', 'fma', 'neon',
+                       'asimd', 'aes', 'sha1', 'sha2'}
+            info["features"] = [f for f in lscpu['flags'] if f in relevant]
+
+    # Try sysfs for cache if lscpu didn't provide it
+    if not info["cache"]:
+        sysfs_cache = _get_linux_cache_from_sysfs()
+        if sysfs_cache:
+            info["cache"] = sysfs_cache
+
+    # Fallback to /proc/cpuinfo for missing data
+    if not info["model_name"]:
+        proc_info = _parse_proc_cpuinfo()
+        info["model_name"] = proc_info.get("model")
+        info["vendor"] = proc_info.get("vendor")
+        if not info["features"] and proc_info.get("features"):
+            relevant = {'sse', 'sse2', 'sse3', 'ssse3', 'sse4_1', 'sse4_2',
+                       'avx', 'avx2', 'avx512f', 'avx512vl', 'fma', 'neon',
+                       'asimd', 'aes', 'sha1', 'sha2'}
+            info["features"] = [f for f in proc_info["features"] if f.lower() in relevant]
+
+    # Detect Intel hybrid architecture (Alder Lake+)
+    if info["model_name"] and "Intel" in str(info["vendor"] or ""):
+        # Hybrid CPUs have "P-core" or "E-core" indicators in some tools
+        # or we can check for specific model numbers (12th gen+)
+        model_lower = info["model_name"].lower()
+        if any(x in model_lower for x in ['12th gen', '13th gen', '14th gen', 'ultra']):
+            info["is_hybrid"] = True
+
+    return info
 
 
 def _parse_proc_cpuinfo() -> Dict[str, Any]:
@@ -299,7 +694,7 @@ def _get_numpy_blas_info() -> Dict[str, Any]:
 
 def get_hardware_spec() -> Dict[str, Any]:
     """
-    Get hardware specification.
+    Get hardware specification (cross-platform: Linux + macOS).
 
     Returns:
         Dict with CPU, memory, and architecture info.
@@ -307,8 +702,15 @@ def get_hardware_spec() -> Dict[str, Any]:
     Example:
         >>> spec = get_hardware_spec()
         >>> print(spec['cpu_model'])
-        'Intel(R) Core(TM) i7-10700K CPU @ 3.80GHz'
+        'Intel(R) Core(TM) i7-10700K CPU @ 3.80GHz'  # Linux
+        'Apple M3 Max'  # macOS Apple Silicon
     """
+    # Platform dispatch
+    if platform.system() == "Darwin":
+        # macOS path
+        return _get_macos_hardware_spec()
+
+    # Linux path (original implementation)
     cpu_info = _parse_proc_cpuinfo()
     mem_info = _get_memory_info()
 

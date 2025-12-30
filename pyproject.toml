@@ -32,6 +32,9 @@ dependencies = [
 "Source" = "https://github.com/cversek/python-super-utils"
 "Tracker" = "https://github.com/cversek/python-super-utils/issues"
 
+[project.scripts]
+superutils = "super_utils.cli.main:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["super_utils*"]

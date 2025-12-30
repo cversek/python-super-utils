@@ -1,9 +1,52 @@
 # python-super-utils
 
-**`python-super-utils`** is a Python package providing advanced debugging tools and customizable tagged logging for developers.
+**`python-super-utils`** is a Python package providing advanced debugging tools, profiling utilities, and Cython compiler optimization for developers.
 
 - **Debugging utilities**: Print detailed traceback, embed IPython shells, and handle Matplotlib plots in non-blocking mode.
 - **Tagged logging**: Automatically include module and function names in log outputs for better traceability.
+- **Profiling**: Memory and timing instrumentation with Rich-formatted reports.
+- **System specification**: Cross-platform hardware detection for reproducible benchmarks.
+- **Cython optimization**: Hardware-aware compiler flag recommendations and build tools.
+
+---
+
+## **CLI: superutils**
+
+The package provides a command-line interface for Cython optimization and system inspection.
+
+### Cython Commands
+
+```bash
+# Detect hardware and show recommended compiler flags
+superutils cython detect
+
+# Run optimization benchmarks to identify workload characteristics
+superutils cython benchmark --list              # List available benchmark classes
+superutils cython benchmark                     # Run all benchmarks
+superutils cython benchmark --class streaming   # Run specific class
+
+# Build Cython extensions with optimized flags
+superutils cython compile --dry-run             # Preview build plan
+superutils cython compile                       # Build with optimized flags
+superutils cython compile --profile aggressive  # Use aggressive optimization
+```
+
+### System Specification Commands
+
+```bash
+# Display system specification
+superutils sysspec show
+
+# Export system specification to JSON
+superutils sysspec export spec.json
+```
+
+### Optimization Workflow
+
+1. **Detect hardware**: `superutils cython detect` shows your CPU capabilities and recommended flags
+2. **Run benchmarks**: `superutils cython benchmark` identifies your workload type (memory-bound, compute-bound, etc.)
+3. **Preview build**: `superutils cython compile --dry-run` shows the build plan
+4. **Build**: `superutils cython compile` builds with optimized flags
 
 ---
 
@@ -18,6 +61,22 @@
 ### Tagged Logging
 - Logs include module and function names as tags for easier traceability.
 - Integrates seamlessly with the Python `logging` module.
+
+### Profiling Tools
+- `TIMING_START` / `TIMING_END`: Measure execution time of code sections.
+- `MEMORY_SNAPSHOT`: Capture memory usage at checkpoints.
+- `PROFILE_SECTION`: Context manager combining timing and memory tracking.
+- Rich-formatted reports and JSON export for reproducibility.
+
+### System Specification
+- `get_system_spec()`: Cross-platform hardware, OS, and compiler detection.
+- `get_apple_silicon_info()`: Apple M1/M2/M3/M4 specific details.
+- `get_linux_cpu_info()`: Linux CPU topology and features.
+
+### Cython Optimization
+- `get_optimal_compile_args()`: Hardware-aware compiler flag recommendations.
+- Benchmark suite with 5 algorithm classes (streaming, wavelet, branch, linalg, interp).
+- Build orchestration with automatic flag injection.
 
 ---
 
@@ -127,6 +186,33 @@ Output:
 [example_function] DEBUG: This is a debug message.
 [example_function] INFO: This is an info message.
 ```
+
+### Cython Optimization
+Example: Using optimized flags in setup.py
+```python
+from super_utils.cython_optimizer import get_optimal_compile_args
+from setuptools import setup, Extension
+from Cython.Build import cythonize
+
+# Get hardware-optimized compiler flags
+opts = get_optimal_compile_args(profile="conservative")
+
+extensions = [
+    Extension(
+        "mymodule._fast",
+        ["mymodule/_fast.pyx"],
+        extra_compile_args=opts['extra_compile_args'],
+    )
+]
+
+setup(
+    name="mymodule",
+    ext_modules=cythonize(extensions),
+)
+```
+
+The `get_optimal_compile_args()` function returns flags like `-O3`, `-march=native`, and `-ftree-vectorize` based on detected hardware. Use `profile="aggressive"` for maximum performance (includes `-ffast-math`).
+
 ---
 ## **Examples**
 The examples/ directory contains scripts demonstrating all functionalities:
