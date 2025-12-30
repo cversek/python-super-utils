@@ -20,9 +20,11 @@ import sys
 import os
 import gc
 import time
-import resource
 import tracemalloc
 import inspect
+
+# third-party imports for memory tracking
+import psutil
 from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass, field
@@ -44,12 +46,8 @@ _peak_traced: int = 0
 
 
 def _get_rss_bytes() -> int:
-    """Get process RSS (Resident Set Size) - cross-platform via resource module."""
-    rusage = resource.getrusage(resource.RUSAGE_SELF)
-    if sys.platform == 'darwin':
-        return rusage.ru_maxrss  # Already in bytes on macOS
-    else:
-        return rusage.ru_maxrss * 1024  # KB to bytes on Linux
+    """Get process RSS (Resident Set Size) - cross-platform via psutil."""
+    return psutil.Process().memory_info().rss
 
 
 def _ensure_tracemalloc():
