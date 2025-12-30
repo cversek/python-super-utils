@@ -20,6 +20,7 @@ import sys
 import os
 import gc
 import time
+import resource
 import tracemalloc
 import inspect
 from datetime import datetime
@@ -43,15 +44,12 @@ _peak_traced: int = 0
 
 
 def _get_rss_bytes() -> int:
-    """Get process RSS (Resident Set Size) from /proc/self/status."""
-    try:
-        with open('/proc/self/status', 'r') as f:
-            for line in f:
-                if line.startswith('VmRSS:'):
-                    return int(line.split()[1]) * 1024  # KB to bytes
-    except (FileNotFoundError, PermissionError):
-        pass
-    return 0
+    """Get process RSS (Resident Set Size) - cross-platform via resource module."""
+    rusage = resource.getrusage(resource.RUSAGE_SELF)
+    if sys.platform == 'darwin':
+        return rusage.ru_maxrss  # Already in bytes on macOS
+    else:
+        return rusage.ru_maxrss * 1024  # KB to bytes on Linux
 
 
 def _ensure_tracemalloc():
