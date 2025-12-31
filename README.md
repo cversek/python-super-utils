@@ -24,6 +24,10 @@ superutils cython detect
 superutils cython benchmark --list              # List available benchmark classes
 superutils cython benchmark                     # Run all benchmarks
 superutils cython benchmark --class streaming   # Run specific class
+superutils cython benchmark --class mfvep,cython_mfvep  # Run benchmark pair
+
+# Rebuild Cython extensions with different compiler flags (tests flag effectiveness)
+superutils cython benchmark --rebuild --profile aggressive
 
 # Build Cython extensions with optimized flags
 superutils cython compile --dry-run             # Preview build plan
@@ -75,7 +79,11 @@ superutils sysspec export spec.json
 
 ### Cython Optimization
 - `get_optimal_compile_args()`: Hardware-aware compiler flag recommendations.
-- Benchmark suite with 5 algorithm classes (streaming, wavelet, branch, linalg, interp).
+- Benchmark suite with 12 benchmarks in 6 paired classes:
+  - **Pure Python** (NumPy): streaming, wavelet, branch, linalg, interp, mfvep
+  - **Cython-compiled**: cython_streaming, cython_wavelet, cython_branch, cython_linalg, cython_interp, cython_mfvep
+- Pairs enable speedup comparison (e.g., mfvep vs cython_mfvep shows 12x speedup).
+- `--rebuild` option recompiles extensions to test compiler flag effectiveness.
 - Build orchestration with automatic flag injection.
 
 ---

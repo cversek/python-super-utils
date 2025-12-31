@@ -1,12 +1,22 @@
 """
 Cython optimization benchmarks.
 
-Provides 5 algorithm classes for workload-specific optimization testing:
+Provides 5 pure Python algorithm classes and 5 Cython-compiled versions
+for workload-specific optimization testing:
+
+Pure Python:
 1. streaming - Memory-bound nested loop accumulator
 2. wavelet - Compute-bound wavelet decomposition/reconstruction
 3. branch - Branch-heavy data-dependent conditionals
 4. linalg - BLAS-intensive small dense matrix operations
 5. interp - Mixed workload interpolation + filtering pipeline
+
+Cython-compiled (require build):
+6. cython_streaming - Cython memory-bound accumulator
+7. cython_wavelet - Cython compute-bound wavelet-like convolution
+8. cython_branch - Cython branch-heavy conditionals
+9. cython_linalg - Cython BLAS-intensive matrix operations
+10. cython_interp - Cython mixed workload pipeline
 
 Usage:
     from super_utils.benchmarks import BENCHMARKS, run_benchmarks
@@ -16,6 +26,9 @@ Usage:
 
     # Run specific benchmark
     results = run_benchmarks(classes=['streaming'])
+
+    # Run Cython benchmarks (requires compiled extensions)
+    results = run_benchmarks(classes=['cython_streaming'])
 
     # Custom settings
     results = run_benchmarks(
@@ -36,6 +49,7 @@ from .wavelet import WaveletTransform
 from .branch import BranchPredictionHeavy
 from .linalg import LinearAlgebraKernel
 from .interp import InterpolationFilter
+from .mfvep_numpy import MFVEPNumpyBenchmark
 
 
 # Registry of all available benchmarks
@@ -45,7 +59,45 @@ BENCHMARKS: Dict[str, type] = {
     'branch': BranchPredictionHeavy,
     'linalg': LinearAlgebraKernel,
     'interp': InterpolationFilter,
+    'mfvep': MFVEPNumpyBenchmark,
 }
+
+# Try to import Cython benchmarks (may not be compiled)
+try:
+    from .cython_streaming import CythonStreamingBenchmark
+    BENCHMARKS['cython_streaming'] = CythonStreamingBenchmark
+except ImportError:
+    pass  # Cython not compiled
+
+try:
+    from .cython_wavelet import CythonWaveletBenchmark
+    BENCHMARKS['cython_wavelet'] = CythonWaveletBenchmark
+except ImportError:
+    pass  # Cython not compiled
+
+try:
+    from .cython_branch import CythonBranchBenchmark
+    BENCHMARKS['cython_branch'] = CythonBranchBenchmark
+except ImportError:
+    pass  # Cython not compiled
+
+try:
+    from .cython_linalg import CythonLinalgBenchmark
+    BENCHMARKS['cython_linalg'] = CythonLinalgBenchmark
+except ImportError:
+    pass  # Cython not compiled
+
+try:
+    from .cython_interp import CythonInterpBenchmark
+    BENCHMARKS['cython_interp'] = CythonInterpBenchmark
+except ImportError:
+    pass  # Cython not compiled
+
+try:
+    from .cython_mfvep import CythonMFVEPBenchmark
+    BENCHMARKS['cython_mfvep'] = CythonMFVEPBenchmark
+except ImportError:
+    pass  # Cython mfvep_kernel not compiled
 
 
 def list_benchmarks() -> Dict[str, Dict[str, str]]:

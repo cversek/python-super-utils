@@ -68,6 +68,19 @@ def add_cython_parser(subparsers):
         help='Save benchmark results to JSON file'
     )
 
+    parser.add_argument(
+        '--rebuild',
+        action='store_true',
+        help='Rebuild Cython extensions before running benchmarks'
+    )
+
+    parser.add_argument(
+        '--size',
+        choices=['small', 'medium', 'large'],
+        default='medium',
+        help='Problem size for benchmarks (default: medium)'
+    )
+
     # Compile-specific arguments
     parser.add_argument(
         'path',
@@ -258,7 +271,7 @@ def _handle_benchmark(console: Console, args):
         benchmarks = list_benchmarks()
 
         table = Table(title="Available Benchmark Classes", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="cyan", width=15)
+        table.add_column("Name", style="cyan", width=20)
         table.add_column("Type", style="yellow", width=20)
         table.add_column("Description", style="white")
 
@@ -272,6 +285,12 @@ def _handle_benchmark(console: Console, args):
         console.print(table)
         return 0
 
+    # Rebuild Cython extensions if requested
+    if args.rebuild:
+        rebuild_result = _rebuild_cython_extensions(console, args.profile)
+        if rebuild_result != 0:
+            return rebuild_result
+
     # Run benchmarks
     console.print("[cyan]Running benchmarks...[/cyan]\n")
 
@@ -282,7 +301,7 @@ def _handle_benchmark(console: Console, args):
             classes=classes,
             iterations=args.iterations,
             warmup=3,
-            size="medium",
+            size=args.size,
             profile=args.profile,
             include_system_info=True
         )
@@ -312,6 +331,83 @@ def _handle_benchmark(console: Console, args):
     return 0
 
 
+def _rebuild_cython_extensions(console: Console, profile: str) -> int:
+    """
+    Rebuild Cython extensions with the specified optimization profile.
+
+    Args:
+        console: Rich console for output
+        profile: Optimization profile ('conservative' or 'aggressive')
+
+    Returns:
+        0 on success, non-zero on failure
+    """
+    import subprocess
+    import os
+    from pathlib import Path
+
+    console.print(f"[cyan]Rebuilding Cython extensions with {profile} profile...[/cyan]\n")
+
+    # Get optimization flags
+    spec = get_system_spec()
+    opts = get_optimal_compile_args(spec=spec, profile=profile)
+    flags = opts.get('extra_compile_args', [])
+
+    # Find the super-utils package directory
+    # Walk up from this file to find setup.py
+    current_file = Path(__file__).resolve()
+    package_root = current_file.parent.parent.parent  # cli -> super_utils -> super-utils
+
+    setup_py = package_root / 'setup.py'
+    if not setup_py.exists():
+        console.print(f"[red]Error: Could not find setup.py at {setup_py}[/red]")
+        return 1
+
+    console.print(f"[dim]Package root: {package_root}[/dim]")
+    console.print(f"[dim]CFLAGS: {' '.join(flags)}[/dim]\n")
+
+    # Set CFLAGS environment variable
+    env = os.environ.copy()
+    env['CFLAGS'] = ' '.join(flags)
+
+    # Run build_ext --inplace
+    try:
+        result = subprocess.run(
+            ['python', 'setup.py', 'build_ext', '--inplace'],
+            cwd=str(package_root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode != 0:
+            console.print("[red]Build failed![/red]")
+            if result.stderr:
+                console.print(f"[red]{result.stderr}[/red]")
+            return 1
+
+        console.print("[green]Build succeeded![/green]\n")
+
+        # Show which .so files were built
+        so_files = list(package_root.glob('**/*.so'))
+        if so_files:
+            console.print("[cyan]Built extensions:[/cyan]")
+            for so_file in so_files:
+                rel_path = so_file.relative_to(package_root)
+                console.print(f"  {rel_path}")
+            console.print()
+
+        return 0
+
+    except subprocess.TimeoutExpired:
+        console.print("[red]Build timed out after 5 minutes[/red]")
+        return 1
+    except Exception as e:
+        console.print(f"[red]Build error: {e}[/red]")
+        return 1
+
+
 def _show_benchmark_results(console: Console, results: dict):
     """Display benchmark results."""
     # System info
@@ -332,25 +428,74 @@ def _show_benchmark_results(console: Console, results: dict):
 
     if benchmark_results:
         table = Table(title="Benchmark Results", show_header=True, header_style="bold cyan")
-        table.add_column("Benchmark", style="cyan", width=15)
-        table.add_column("Type", style="yellow", width=18)
-        table.add_column("Mean (ms)", justify="right", style="green")
-        table.add_column("Std (ms)", justify="right", style="white")
-        table.add_column("Min (ms)", justify="right", style="white")
-        table.add_column("Max (ms)", justify="right", style="white")
+        table.add_column("Benchmark", style="cyan", width=20, no_wrap=True)
+        table.add_column("Type", style="yellow", width=14)
+        table.add_column("Mean (ms)", justify="right", style="green", width=10)
+        table.add_column("Std (ms)", justify="right", style="white", width=8)
+        table.add_column("Min (ms)", justify="right", style="white", width=10)
+        table.add_column("Max (ms)", justify="right", style="white", width=10)
+        table.add_column("Speedup", justify="right", style="magenta", width=8)
         table.add_column("Valid", justify="center")
 
+        # Define benchmark pairs for grouping
+        pairs = [
+            ('streaming', 'cython_streaming'),
+            ('wavelet', 'cython_wavelet'),
+            ('branch', 'cython_branch'),
+            ('linalg', 'cython_linalg'),
+            ('interp', 'cython_interp'),
+            ('mfvep', 'cython_mfvep'),
+        ]
+
+        # Build ordered list with separators
+        added = set()
+        first_pair = True
+        for base, cython in pairs:
+            if base in benchmark_results or cython in benchmark_results:
+                if not first_pair:
+                    table.add_section()  # Thin horizontal line
+                first_pair = False
+
+                base_time = benchmark_results.get(base, {}).get('mean_ms', 0)
+
+                for name in [base, cython]:
+                    if name in benchmark_results:
+                        result = benchmark_results[name]
+                        added.add(name)
+                        valid_mark = "[green]✓[/green]" if result.get('valid') else "[red]✗[/red]"
+                        mean_ms = result.get('mean_ms', 0)
+
+                        # Calculate speedup (base/cython)
+                        if name.startswith('cython_') and base_time > 0 and mean_ms > 0:
+                            speedup = f"{base_time / mean_ms:.1f}x"
+                        else:
+                            speedup = "-"
+
+                        table.add_row(
+                            name,
+                            result.get('workload_type', '?'),
+                            f"{mean_ms:.2f}",
+                            f"{result.get('std_ms', 0):.2f}",
+                            f"{result.get('min_ms', 0):.2f}",
+                            f"{result.get('max_ms', 0):.2f}",
+                            speedup,
+                            valid_mark
+                        )
+
+        # Add any unpaired benchmarks at the end
         for name, result in benchmark_results.items():
-            valid_mark = "[green]✓[/green]" if result.get('valid') else "[red]✗[/red]"
-            table.add_row(
-                name,
-                result.get('workload_type', '?'),
-                f"{result.get('mean_ms', 0):.2f}",
-                f"{result.get('std_ms', 0):.2f}",
-                f"{result.get('min_ms', 0):.2f}",
-                f"{result.get('max_ms', 0):.2f}",
-                valid_mark
-            )
+            if name not in added:
+                valid_mark = "[green]✓[/green]" if result.get('valid') else "[red]✗[/red]"
+                table.add_row(
+                    name,
+                    result.get('workload_type', '?'),
+                    f"{result.get('mean_ms', 0):.2f}",
+                    f"{result.get('std_ms', 0):.2f}",
+                    f"{result.get('min_ms', 0):.2f}",
+                    f"{result.get('max_ms', 0):.2f}",
+                    "-",
+                    valid_mark
+                )
 
         console.print(table)
 
