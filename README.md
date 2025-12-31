@@ -12,22 +12,29 @@
 
 ## **CLI: superutils**
 
-The package provides a command-line interface for Cython optimization and system inspection.
+The package provides a command-line interface for benchmarking, Cython optimization, and system inspection.
+
+### Benchmark Commands
+
+```bash
+# Discover benchmarks in current project (BenchmarkBase subclasses)
+superutils benchmark list
+
+# List internal super_utils test benchmarks (12 paired workloads)
+superutils benchmark list-tests
+
+# Run benchmarks
+superutils benchmark run                        # Run all internal benchmarks
+superutils benchmark run --class streaming      # Run specific class
+superutils benchmark run --class mfvep,cython_mfvep  # Run benchmark pair
+superutils benchmark run --size large -n 10    # Large problem, 10 iterations
+```
 
 ### Cython Commands
 
 ```bash
 # Detect hardware and show recommended compiler flags
 superutils cython detect
-
-# Run optimization benchmarks to identify workload characteristics
-superutils cython benchmark --list              # List available benchmark classes
-superutils cython benchmark                     # Run all benchmarks
-superutils cython benchmark --class streaming   # Run specific class
-superutils cython benchmark --class mfvep,cython_mfvep  # Run benchmark pair
-
-# Rebuild Cython extensions with different compiler flags (tests flag effectiveness)
-superutils cython benchmark --rebuild --profile aggressive
 
 # Build Cython extensions with optimized flags
 superutils cython compile --dry-run             # Preview build plan
@@ -48,7 +55,7 @@ superutils sysspec export spec.json
 ### Optimization Workflow
 
 1. **Detect hardware**: `superutils cython detect` shows your CPU capabilities and recommended flags
-2. **Run benchmarks**: `superutils cython benchmark` identifies your workload type (memory-bound, compute-bound, etc.)
+2. **Run benchmarks**: `superutils benchmark run` identifies your workload type (memory-bound, compute-bound, etc.)
 3. **Preview build**: `superutils cython compile --dry-run` shows the build plan
 4. **Build**: `superutils cython compile` builds with optimized flags
 

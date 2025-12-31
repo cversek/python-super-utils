@@ -42,6 +42,9 @@ Usage:
 from typing import Dict, Any, List, Optional
 import datetime
 import json
+import importlib.util
+import sys
+from pathlib import Path
 
 from .base import BenchmarkBase
 from .streaming import StreamingAccumulator
@@ -102,7 +105,7 @@ except ImportError:
 
 def list_benchmarks() -> Dict[str, Dict[str, str]]:
     """
-    Get metadata for all available benchmarks.
+    Get metadata for all available internal benchmarks (super_utils test suite).
 
     Returns:
         Dict mapping benchmark name to metadata dict with keys:
@@ -118,6 +121,165 @@ def list_benchmarks() -> Dict[str, Dict[str, str]]:
         }
         for name, cls in BENCHMARKS.items()
     }
+
+
+def discover_project_benchmarks(
+    search_path: Optional[Path] = None,
+    recursive: bool = True,
+    max_depth: int = 5,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Discover BenchmarkBase subclasses in a project directory.
+
+    Traverses the given directory (default: current working directory) looking
+    for Python files that define BenchmarkBase subclasses. This enables projects
+    to define their own benchmarks that can be run via `superutils cython benchmark`.
+
+    Args:
+        search_path: Directory to search (default: current working directory)
+        recursive: Whether to search subdirectories
+        max_depth: Maximum directory depth to traverse
+
+    Returns:
+        Dict mapping benchmark name to metadata dict with keys:
+        - name: Short identifier (from class.name)
+        - description: Human-readable description
+        - workload_type: Workload classification
+        - module_path: Path to the module file
+        - class_name: Name of the benchmark class
+
+    Note:
+        - Skips hidden directories (starting with '.')
+        - Skips common non-source directories (node_modules, __pycache__, .git, etc.)
+        - Handles import errors gracefully (logs warning, continues)
+    """
+    if search_path is None:
+        search_path = Path.cwd()
+    else:
+        search_path = Path(search_path)
+
+    if not search_path.is_dir():
+        return {}
+
+    discovered = {}
+    skip_dirs = {
+        '__pycache__', '.git', '.hg', '.svn', 'node_modules',
+        '.tox', '.nox', '.eggs', '*.egg-info', 'build', 'dist',
+        '.venv', 'venv', 'env', '.env',
+    }
+
+    def _search_directory(dir_path: Path, depth: int = 0):
+        if depth > max_depth:
+            return
+
+        try:
+            entries = list(dir_path.iterdir())
+        except PermissionError:
+            return
+
+        for entry in entries:
+            # Skip hidden and common non-source directories
+            if entry.name.startswith('.') or entry.name in skip_dirs:
+                continue
+
+            if entry.is_file() and entry.suffix == '.py':
+                # Skip setup/config files that may have side effects
+                skip_files = {'setup.py', 'conftest.py', 'conf.py', 'manage.py'}
+                if entry.name in skip_files:
+                    continue
+
+                # Try to find BenchmarkBase subclasses in this file
+                benchmarks = _extract_benchmarks_from_file(entry)
+                for name, info in benchmarks.items():
+                    if name not in discovered:
+                        discovered[name] = info
+
+            elif entry.is_dir() and recursive:
+                _search_directory(entry, depth + 1)
+
+    def _extract_benchmarks_from_file(filepath: Path) -> Dict[str, Dict[str, Any]]:
+        """Extract BenchmarkBase subclasses from a Python file."""
+        found = {}
+
+        try:
+            # Create a unique module name to avoid conflicts
+            module_name = f"_benchmark_discovery_{filepath.stem}_{id(filepath)}"
+
+            spec = importlib.util.spec_from_file_location(module_name, filepath)
+            if spec is None or spec.loader is None:
+                return {}
+
+            module = importlib.util.module_from_spec(spec)
+
+            # Temporarily add to sys.modules for imports within the module
+            sys.modules[module_name] = module
+
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                # Import failed - could be missing deps, syntax error, etc.
+                return {}
+            finally:
+                # Clean up sys.modules
+                sys.modules.pop(module_name, None)
+
+            # Find BenchmarkBase subclasses
+            for attr_name in dir(module):
+                if attr_name.startswith('_'):
+                    continue
+
+                attr = getattr(module, attr_name, None)
+                if attr is None:
+                    continue
+
+                # Check if it's a class that inherits from BenchmarkBase
+                if (isinstance(attr, type) and
+                    issubclass(attr, BenchmarkBase) and
+                    attr is not BenchmarkBase and
+                    hasattr(attr, 'name') and
+                    hasattr(attr, 'description')):
+
+                    # Use the class's name attribute as the key
+                    benchmark_name = getattr(attr, 'name', attr_name)
+
+                    # Skip internal super_utils benchmarks (already in BENCHMARKS)
+                    if benchmark_name in BENCHMARKS:
+                        continue
+
+                    found[benchmark_name] = {
+                        'name': benchmark_name,
+                        'description': getattr(attr, 'description', 'No description'),
+                        'workload_type': getattr(attr, 'workload_type', 'unknown'),
+                        'module_path': str(filepath),
+                        'class_name': attr_name,
+                        'cls': attr,  # Keep reference for instantiation
+                    }
+
+        except Exception:
+            # Any error during extraction - skip this file
+            pass
+
+        return found
+
+    _search_directory(search_path)
+    return discovered
+
+
+def get_project_benchmark_class(name: str, search_path: Optional[Path] = None) -> Optional[type]:
+    """
+    Get a discovered project benchmark class by name.
+
+    Args:
+        name: Benchmark name to find
+        search_path: Directory to search (default: current working directory)
+
+    Returns:
+        The benchmark class, or None if not found
+    """
+    discovered = discover_project_benchmarks(search_path)
+    if name in discovered:
+        return discovered[name].get('cls')
+    return None
 
 
 def run_benchmarks(

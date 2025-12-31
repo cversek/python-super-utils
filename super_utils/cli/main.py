@@ -2,7 +2,8 @@
 super_utils CLI main dispatcher.
 
 Provides subcommands:
-- superutils cython [detect|recommend]
+- superutils benchmark [list|list-tests|run]
+- superutils cython [detect|recommend|compile]
 - superutils sysspec [show|export]
 """
 
@@ -20,11 +21,15 @@ def main(argv: Optional[List[str]] = None):
     """
     parser = argparse.ArgumentParser(
         prog='superutils',
-        description='Utilities for system inspection and Cython optimization',
+        description='Utilities for benchmarking, system inspection, and Cython optimization',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Benchmark subcommand
+    from .benchmark_cmd import add_benchmark_parser
+    add_benchmark_parser(subparsers)
 
     # Cython subcommand
     from .cython_cmd import add_cython_parser
@@ -38,7 +43,10 @@ def main(argv: Optional[List[str]] = None):
     args = parser.parse_args(argv)
 
     # Dispatch
-    if args.command == 'cython':
+    if args.command == 'benchmark':
+        from .benchmark_cmd import handle_benchmark
+        return handle_benchmark(args)
+    elif args.command == 'cython':
         from .cython_cmd import handle_cython
         return handle_cython(args)
     elif args.command == 'sysspec':
