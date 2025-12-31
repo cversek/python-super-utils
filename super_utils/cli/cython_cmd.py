@@ -295,7 +295,8 @@ def _handle_benchmark(console: Console, args):
     # Run benchmarks
     console.print("[cyan]Running benchmarks...[/cyan]\n")
 
-    classes = [args.benchmark_class] if args.benchmark_class else None
+    # Split comma-separated benchmark classes (e.g., --class mfvep,cython_mfvep)
+    classes = args.benchmark_class.split(',') if args.benchmark_class else None
 
     try:
         results = run_benchmarks(
