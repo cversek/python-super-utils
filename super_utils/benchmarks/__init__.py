@@ -131,13 +131,15 @@ def discover_project_benchmarks(
     """
     Discover BenchmarkBase subclasses in a project directory.
 
-    Traverses the given directory (default: current working directory) looking
-    for Python files that define BenchmarkBase subclasses. This enables projects
-    to define their own benchmarks that can be run via `superutils cython benchmark`.
+    Searches for benchmark files following strict conventions:
+    - Only looks in directories named 'benchmarks/'
+    - Only imports files matching 'benchmark_*.py'
+
+    This prevents importing unrelated Python files that may have side effects.
 
     Args:
         search_path: Directory to search (default: current working directory)
-        recursive: Whether to search subdirectories
+        recursive: Whether to search subdirectories for 'benchmarks/' folders
         max_depth: Maximum directory depth to traverse
 
     Returns:
@@ -149,9 +151,9 @@ def discover_project_benchmarks(
         - class_name: Name of the benchmark class
 
     Note:
-        - Skips hidden directories (starting with '.')
-        - Skips common non-source directories (node_modules, __pycache__, .git, etc.)
-        - Handles import errors gracefully (logs warning, continues)
+        - Only searches in directories named 'benchmarks/'
+        - Only imports files matching 'benchmark_*.py'
+        - Handles import errors gracefully
     """
     if search_path is None:
         search_path = Path.cwd()
@@ -168,7 +170,8 @@ def discover_project_benchmarks(
         '.venv', 'venv', 'env', '.env',
     }
 
-    def _search_directory(dir_path: Path, depth: int = 0):
+    def _search_for_benchmark_dirs(dir_path: Path, depth: int = 0):
+        """Find 'benchmarks/' directories and search them for benchmark files."""
         if depth > max_depth:
             return
 
@@ -182,20 +185,25 @@ def discover_project_benchmarks(
             if entry.name.startswith('.') or entry.name in skip_dirs:
                 continue
 
-            if entry.is_file() and entry.suffix == '.py':
-                # Skip setup/config files that may have side effects
-                skip_files = {'setup.py', 'conftest.py', 'conf.py', 'manage.py'}
-                if entry.name in skip_files:
-                    continue
+            if entry.is_dir():
+                if entry.name == 'benchmarks':
+                    # Found a benchmarks/ directory - search for benchmark_*.py files
+                    _search_benchmark_dir(entry)
+                elif recursive:
+                    # Keep searching for benchmarks/ directories
+                    _search_for_benchmark_dirs(entry, depth + 1)
 
-                # Try to find BenchmarkBase subclasses in this file
-                benchmarks = _extract_benchmarks_from_file(entry)
-                for name, info in benchmarks.items():
-                    if name not in discovered:
-                        discovered[name] = info
-
-            elif entry.is_dir() and recursive:
-                _search_directory(entry, depth + 1)
+    def _search_benchmark_dir(benchmarks_dir: Path):
+        """Search a benchmarks/ directory for benchmark_*.py files."""
+        try:
+            for entry in benchmarks_dir.iterdir():
+                if entry.is_file() and entry.name.startswith('benchmark_') and entry.suffix == '.py':
+                    benchmarks = _extract_benchmarks_from_file(entry)
+                    for name, info in benchmarks.items():
+                        if name not in discovered:
+                            discovered[name] = info
+        except PermissionError:
+            pass
 
     def _extract_benchmarks_from_file(filepath: Path) -> Dict[str, Dict[str, Any]]:
         """Extract BenchmarkBase subclasses from a Python file."""
@@ -261,7 +269,7 @@ def discover_project_benchmarks(
 
         return found
 
-    _search_directory(search_path)
+    _search_for_benchmark_dirs(search_path)
     return discovered
 
 
