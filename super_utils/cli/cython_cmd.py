@@ -10,6 +10,7 @@ Commands:
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -373,7 +374,7 @@ def _rebuild_cython_extensions(console: Console, profile: str) -> int:
     # Run build_ext --inplace
     try:
         result = subprocess.run(
-            ['python', 'setup.py', 'build_ext', '--inplace'],
+            [sys.executable, 'setup.py', 'build_ext', '--inplace'],
             cwd=str(package_root),
             env=env,
             capture_output=True,
