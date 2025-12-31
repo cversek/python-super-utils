@@ -237,7 +237,8 @@ def get_optimal_compile_args(
 
     Args:
         spec: System spec dict from get_system_spec() (auto-detected if None)
-        profile: Optimization profile - "conservative" (default) or "aggressive"
+        profile: Optimization profile - "baseline", "conservative" (default), or "aggressive"
+                 Baseline: -O2 only (system defaults for comparison baseline)
                  Conservative: -O3 -march=native/mcpu -ftree-vectorize -fno-math-errno
                  Aggressive: adds -ffast-math (WARNING: may violate IEEE 754)
 
@@ -263,8 +264,20 @@ def get_optimal_compile_args(
         ...               extra_compile_args=opts['extra_compile_args'])
         ... ]
     """
-    if profile not in ("conservative", "aggressive"):
-        raise ValueError(f"profile must be 'conservative' or 'aggressive', got: {profile}")
+    if profile not in ("baseline", "conservative", "aggressive"):
+        raise ValueError(f"profile must be 'baseline', 'conservative', or 'aggressive', got: {profile}")
+
+    # Baseline profile: minimal flags for comparison
+    if profile == "baseline":
+        return {
+            'extra_compile_args': ['-O2'],
+            'extra_link_args': [],
+            'profile': 'baseline',
+            'reasoning': {
+                '-O2': 'Moderate optimization (system default baseline for comparison)',
+            },
+            'platform': 'baseline',
+        }
 
     # Auto-detect system if not provided
     if spec is None:

@@ -38,7 +38,7 @@ def add_cython_parser(subparsers):
     # Common arguments
     parser.add_argument(
         '--profile',
-        choices=['conservative', 'aggressive'],
+        choices=['baseline', 'conservative', 'aggressive'],
         default='conservative',
         help='Optimization profile (default: conservative)'
     )
