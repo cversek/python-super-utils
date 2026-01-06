@@ -254,14 +254,48 @@ def _handle_run(console: Console, args):
 
 def _show_benchmark_results(console: Console, results: dict):
     """Display benchmark results."""
+    from ..system_spec import get_apple_silicon_info
+    import os
+    import json
+
     # System info
     if results.get('system'):
         sys_info = results['system']
+
+        # Build cores display with P/E core breakdown if available
+        cores_display = str(sys_info.get('cores', '?'))
+        apple_info = get_apple_silicon_info()
+        if apple_info and apple_info.get('performance_cores') and apple_info.get('efficiency_cores'):
+            p_cores = apple_info['performance_cores']
+            e_cores = apple_info['efficiency_cores']
+            cores_display = f"{p_cores}P + {e_cores}E = {p_cores + e_cores} total"
+
+        # Get num_threads (OMP_NUM_THREADS or default to P-cores on Apple Silicon)
+        num_threads = os.environ.get('OMP_NUM_THREADS')
+        if num_threads:
+            threads_display = f"{num_threads} (OMP_NUM_THREADS)"
+        elif apple_info and apple_info.get('performance_cores'):
+            threads_display = f"{apple_info['performance_cores']} (default: P-cores)"
+        else:
+            threads_display = f"{sys_info.get('cores', '?')} (default: all cores)"
+
+        # Try to read actual build profile from marker file
+        profile_display = results.get('profile', 'unknown')
+        try:
+            marker_path = Path.cwd() / '.superutils_build_profile.json'
+            if marker_path.exists():
+                with open(marker_path) as f:
+                    marker = json.load(f)
+                    profile_display = marker.get('profile', profile_display)
+        except Exception:
+            pass  # Fall back to results['profile']
+
         console.print(Panel(
             f"[cyan]CPU:[/cyan] {sys_info['cpu']}\n"
-            f"[cyan]Cores:[/cyan] {sys_info['cores']}\n"
+            f"[cyan]Cores:[/cyan] {cores_display}\n"
             f"[cyan]Architecture:[/cyan] {sys_info['arch']}\n"
-            f"[cyan]Profile:[/cyan] {results['profile']}",
+            f"[cyan]Profile:[/cyan] {profile_display}\n"
+            f"[cyan]Threads:[/cyan] {threads_display}",
             title="System Information",
             border_style="blue"
         ))

@@ -12,6 +12,7 @@ import glob
 import os
 import time
 import shutil
+import json
 
 
 def discover_cython_project(path: str) -> Dict[str, Any]:
@@ -248,6 +249,16 @@ def build_cython_extensions(
             root = Path(project_root)
             so_files = [str(p) for p in root.rglob("*.so")]
             result['files_built'] = so_files
+
+            # Write build profile marker for benchmark reporting
+            marker_path = root / '.superutils_build_profile.json'
+            marker_data = {
+                'profile': profile,
+                'flags': flags,
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            }
+            with open(marker_path, 'w') as f:
+                json.dump(marker_data, f, indent=2)
         else:
             result['success'] = False
             result['errors'].append(f"Build failed with exit code {proc.returncode}")
