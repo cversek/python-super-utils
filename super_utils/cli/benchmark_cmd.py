@@ -60,9 +60,9 @@ def add_benchmark_parser(subparsers):
 
     parser.add_argument(
         '--profile',
-        choices=['baseline', 'conservative', 'aggressive'],
-        default='conservative',
-        help='Optimization profile for system info (default: conservative)'
+        choices=['O0', 'O1', 'O2', 'O3', 'O3-march', 'O3-march-vec', 'O3-ffast-math'],
+        default='O3-march',
+        help='Optimization profile for system info (default: O3-march)'
     )
 
     return parser

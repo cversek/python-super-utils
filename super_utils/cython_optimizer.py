@@ -93,7 +93,7 @@ def _get_apple_silicon_flags(chip_info: Dict, profile: str) -> Dict[str, Any]:
         reasoning['-mcpu=native'] = 'Auto-detect ARM64 target (compiler will choose best match)'
 
     # Aggressive profile additions
-    if profile == "aggressive":
+    if profile == "O3-ffast-math":
         flags.append('-ffast-math')
         reasoning['-ffast-math'] = 'AGGRESSIVE: Relaxed IEEE 754 compliance for speed (may affect NaN/Inf handling)'
 
@@ -141,7 +141,7 @@ def _get_linux_x86_flags(cpu_info: Dict, profile: str) -> Dict[str, Any]:
         reasoning['-march=native'] += f' (detected: {", ".join(feature_notes)})'
 
     # Aggressive profile additions
-    if profile == "aggressive":
+    if profile == "O3-ffast-math":
         flags.append('-ffast-math')
         reasoning['-ffast-math'] = 'AGGRESSIVE: Relaxed IEEE 754 compliance for speed (may affect NaN/Inf handling)'
 
@@ -184,7 +184,7 @@ def _get_linux_arm_flags(cpu_info: Dict, profile: str) -> Dict[str, Any]:
         reasoning['-march=native'] += f' (detected: {", ".join(feature_notes)})'
 
     # Aggressive profile additions
-    if profile == "aggressive":
+    if profile == "O3-ffast-math":
         flags.append('-ffast-math')
         reasoning['-ffast-math'] = 'AGGRESSIVE: Relaxed IEEE 754 compliance for speed (may affect NaN/Inf handling)'
 
@@ -211,7 +211,7 @@ def _get_generic_flags(profile: str) -> Dict[str, Any]:
         '-fno-math-errno': 'Skip errno updates on math functions (safe for most numerical code)',
     }
 
-    if profile == "aggressive":
+    if profile == "O3-ffast-math":
         flags.append('-ffast-math')
         reasoning['-ffast-math'] = 'AGGRESSIVE: Relaxed IEEE 754 compliance for speed (may affect NaN/Inf handling)'
 
@@ -227,7 +227,7 @@ def _get_generic_flags(profile: str) -> Dict[str, Any]:
 
 def get_optimal_compile_args(
     spec: Optional[Dict] = None,
-    profile: str = "conservative"
+    profile: str = "O3-march"
 ) -> Dict[str, Any]:
     """
     Get optimal Cython compiler flags for current hardware.
@@ -237,8 +237,10 @@ def get_optimal_compile_args(
 
     Args:
         spec: System spec dict from get_system_spec() (auto-detected if None)
-        profile: Optimization profile - "baseline", "conservative" (default), or "aggressive"
-                 Baseline: -O2 only (system defaults for comparison baseline)
+        profile: Optimization profile - "minimal", "O1", "baseline" (default), "conservative", or "aggressive"
+                 Minimal: No optimization flags (for debugging)
+                 O1: -O1 only (basic optimization)
+                 Baseline: -O2 only (system defaults, now default)
                  Conservative: -O3 -march=native/mcpu -ftree-vectorize -fno-math-errno
                  Aggressive: adds -ffast-math (WARNING: may violate IEEE 754)
 
@@ -264,19 +266,70 @@ def get_optimal_compile_args(
         ...               extra_compile_args=opts['extra_compile_args'])
         ... ]
     """
-    if profile not in ("baseline", "conservative", "aggressive"):
-        raise ValueError(f"profile must be 'baseline', 'conservative', or 'aggressive', got: {profile}")
+    valid_profiles = ("O0", "O1", "O2", "O3", "O3-march", "O3-march-vec", "O3-ffast-math")
+    if profile not in valid_profiles:
+        raise ValueError(f"profile must be one of {valid_profiles}, got: {profile}")
 
-    # Baseline profile: minimal flags for comparison
-    if profile == "baseline":
+    # O0: no optimization (for debugging)
+    if profile == "O0":
+        return {
+            'extra_compile_args': ['-O0'],
+            'extra_link_args': [],
+            'profile': 'O0',
+            'reasoning': {
+                '-O0': 'No optimization (for debugging, preserves all debug info)',
+            },
+            'platform': 'O0',
+        }
+
+    # O1 profile: basic optimization
+    if profile == "O1":
+        return {
+            'extra_compile_args': ['-O1'],
+            'extra_link_args': [],
+            'profile': 'O1',
+            'reasoning': {
+                '-O1': 'Basic optimization (faster compile, modest runtime improvement)',
+            },
+            'platform': 'O1',
+        }
+
+    # O2: moderate optimization
+    if profile == "O2":
         return {
             'extra_compile_args': ['-O2'],
             'extra_link_args': [],
-            'profile': 'baseline',
+            'profile': 'O2',
             'reasoning': {
-                '-O2': 'Moderate optimization (system default baseline for comparison)',
+                '-O2': 'Moderate optimization (balanced speed/size)',
             },
-            'platform': 'baseline',
+            'platform': 'O2',
+        }
+
+    # O3 profile: aggressive optimization without extra flags
+    if profile == "O3":
+        return {
+            'extra_compile_args': ['-O3'],
+            'extra_link_args': [],
+            'profile': 'O3',
+            'reasoning': {
+                '-O3': 'Aggressive optimization (more inlining, loop unrolling)',
+            },
+            'platform': 'O3',
+        }
+
+    # O3-march profile: O3 with architecture targeting but no vectorization
+    if profile == "O3-march":
+        return {
+            'extra_compile_args': ['-O3', '-march=native', '-fno-tree-vectorize'],
+            'extra_link_args': [],
+            'profile': 'O3-march',
+            'reasoning': {
+                '-O3': 'Aggressive optimization (more inlining, loop unrolling)',
+                '-march=native': 'Target current CPU architecture',
+                '-fno-tree-vectorize': 'Disable auto-vectorization (can hurt cache)',
+            },
+            'platform': 'O3-march',
         }
 
     # Auto-detect system if not provided

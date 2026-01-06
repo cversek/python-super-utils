@@ -39,9 +39,9 @@ def add_cython_parser(subparsers):
     # Common arguments
     parser.add_argument(
         '--profile',
-        choices=['baseline', 'conservative', 'aggressive'],
-        default='conservative',
-        help='Optimization profile (default: conservative)'
+        choices=['O0', 'O1', 'O2', 'O3', 'O3-march', 'O3-march-vec', 'O3-ffast-math'],
+        default='O3-march',
+        help='Optimization profile (default: O3-march)'
     )
 
     # Compile-specific arguments
