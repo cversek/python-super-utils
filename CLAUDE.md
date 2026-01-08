@@ -53,7 +53,9 @@ These three modules follow consistent patterns:
 - `*_TIMELINE()` for chronological display
 - All use Rich tables/panels for output formatting
 
-**Memory**: Wraps `tracemalloc` with RSS tracking via `/proc/self/status`. `MEMORY_SNAPSHOT()` captures caller frame context automatically.
+**Memory**: Two tracking modes available:
+- *Point-in-time*: `MEMORY_SNAPSHOT()` captures RSS at discrete moments with caller frame context.
+- *Threaded peak*: `MEMORY_PEAK_START/STOP` or `MEMORY_PEAK_CONTEXT` sample RSS in background thread (default 10ms) to catch transient allocations freed before next snapshot. Use for NumPy vectorized ops; use snapshots for streaming/accumulator patterns.
 
 **Timing**: Uses `time.perf_counter()` for precision. `PROFILE_SECTION` context manager combines timing + memory tracking. `TIMING_EXPORT_JSON()` includes system spec for reproducibility.
 

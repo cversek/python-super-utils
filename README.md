@@ -75,7 +75,9 @@ superutils sysspec export spec.json
 
 ### Profiling Tools
 - `TIMING_START` / `TIMING_END`: Measure execution time of code sections.
-- `MEMORY_SNAPSHOT`: Capture memory usage at checkpoints.
+- `MEMORY_SNAPSHOT`: Capture memory usage at checkpoints (point-in-time).
+- `MEMORY_PEAK_START` / `MEMORY_PEAK_STOP`: Background thread samples RSS to catch transient allocations.
+- `MEMORY_PEAK_CONTEXT`: Context manager for peak tracking.
 - `PROFILE_SECTION`: Context manager combining timing and memory tracking.
 - Rich-formatted reports and JSON export for reproducibility.
 

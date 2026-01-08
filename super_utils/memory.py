@@ -6,14 +6,25 @@ Memory profiling utilities for tracking memory usage across code execution.
 Goes beyond basic tracemalloc by providing timeline tracking, delta analysis,
 trend detection, and Rich-formatted reporting.
 
-Functions:
-----------
+Point-in-Time Functions:
+------------------------
 - MEMORY_SNAPSHOT: Capture memory state at a code point with frame context.
 - MEMORY_REPORT: Generate formatted memory usage report.
 - MEMORY_TIMELINE: Display accumulated snapshots as timeline.
 - MEMORY_RESET: Clear all accumulated snapshots.
 - MEMORY_CONFIGURE: Configure global memory tracking settings.
 - MEMORY_DELTA: Show memory change since last snapshot.
+
+Threaded Peak Tracking (for transient allocations):
+---------------------------------------------------
+- MEMORY_PEAK_START: Start background thread sampling RSS at intervals.
+- MEMORY_PEAK_STOP: Stop tracking, return peak memory above baseline.
+- MEMORY_PEAK_CONTEXT: Context manager wrapping start/stop.
+- PeakMemoryTracker: Class for manual control of peak tracking.
+
+Use threaded tracking when memory may be freed before measurement (e.g.,
+NumPy vectorized ops with large temporaries). Use snapshots when memory
+persists until measurement (e.g., streaming/accumulator patterns).
 """
 # standard imports
 import sys
@@ -22,12 +33,23 @@ import gc
 import time
 import tracemalloc
 import inspect
+import threading
+import warnings
+from contextlib import contextmanager
 
 # third-party imports for memory tracking
 import psutil
 from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass, field
+
+# Optional numpy import for sample collection
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    np = None
+    _HAS_NUMPY = False
 
 # third party imports
 from rich.console import Console
@@ -43,6 +65,9 @@ _memory_enabled: bool = True
 _tracemalloc_started: bool = False
 _peak_rss: int = 0
 _peak_traced: int = 0
+
+# Module-level state for peak memory tracking
+_active_peak_trackers: Dict[str, "PeakMemoryTracker"] = {}
 
 
 def _get_rss_bytes() -> int:
@@ -337,3 +362,199 @@ def MEMORY_TIMELINE(max_entries: int = 20, show_deltas: bool = True):
         trend_color = "red" if trend > 50*1024*1024 else "yellow" if trend > 0 else "green"
         console.print(f"\n[bold]Trend:[/bold] [{trend_color}]{trend_str}[/{trend_color}] over {len(_memory_snapshots)} snapshots")
     console.print()
+
+
+# =============================================================================
+# Peak Memory Tracking API
+# =============================================================================
+
+class PeakMemoryTracker:
+    """Background thread that samples RSS to capture peak memory."""
+
+    def __init__(self, sample_interval_ms: int = 10, collect_samples: bool = False):
+        """
+        Args:
+            sample_interval_ms: Sampling interval in milliseconds (default: 10)
+            collect_samples: If True, store all samples for later analysis
+        """
+        self._sample_interval_ms = sample_interval_ms
+        self._collect_samples = collect_samples
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._baseline_bytes: int = 0
+        self._peak_bytes: int = 0
+        self._sample_count: int = 0
+        self._samples_list: List[Tuple[float, int]] = []  # (timestamp, rss_bytes)
+
+    def start(self) -> None:
+        """Begin background sampling. Records baseline RSS."""
+        self._baseline_bytes = _get_rss_bytes()
+        self._peak_bytes = self._baseline_bytes
+        self._sample_count = 0
+        self._samples_list = []
+        self._stop_event.clear()
+
+        self._thread = threading.Thread(target=self._sample_loop, daemon=True)
+        self._thread.start()
+
+    def _sample_loop(self) -> None:
+        """Internal sampling loop run by background thread."""
+        interval_sec = self._sample_interval_ms / 1000.0
+
+        while not self._stop_event.is_set():
+            current_rss = _get_rss_bytes()
+            self._sample_count += 1
+
+            if current_rss > self._peak_bytes:
+                self._peak_bytes = current_rss
+
+            if self._collect_samples:
+                self._samples_list.append((time.time(), current_rss))
+
+            self._stop_event.wait(interval_sec)
+
+    def stop(self) -> int:
+        """Stop sampling. Returns peak delta in bytes."""
+        self._stop_event.set()
+
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+
+        # Take final sample after stop signal to catch last-moment peaks
+        final_rss = _get_rss_bytes()
+        self._sample_count += 1
+        if final_rss > self._peak_bytes:
+            self._peak_bytes = final_rss
+        if self._collect_samples:
+            self._samples_list.append((time.time(), final_rss))
+
+        return self._peak_bytes - self._baseline_bytes
+
+    @property
+    def peak_mb(self) -> float:
+        """Peak memory above baseline in MB."""
+        return (self._peak_bytes - self._baseline_bytes) / (1024 * 1024)
+
+    @property
+    def sample_count(self) -> int:
+        """Number of samples taken."""
+        return self._sample_count
+
+    @property
+    def baseline_bytes(self) -> int:
+        """RSS at start."""
+        return self._baseline_bytes
+
+    @property
+    def peak_bytes(self) -> int:
+        """Maximum RSS observed."""
+        return self._peak_bytes
+
+    @property
+    def samples(self) -> Optional[Any]:
+        """If collect_samples=True, structured array with (timestamp, rss_bytes).
+        Returns None if collect_samples=False or numpy unavailable.
+        Warns if numpy unavailable and samples were requested."""
+        if not self._collect_samples:
+            return None
+
+        if not _HAS_NUMPY:
+            warnings.warn(
+                "numpy not available; cannot return samples as structured array. "
+                "Access raw samples via tracker._samples_list if needed.",
+                RuntimeWarning
+            )
+            return None
+
+        if not self._samples_list:
+            return np.array([], dtype=[('timestamp', 'f8'), ('rss_bytes', 'i8')])
+
+        return np.array(
+            self._samples_list,
+            dtype=[('timestamp', 'f8'), ('rss_bytes', 'i8')]
+        )
+
+
+def MEMORY_PEAK_START(label: str, sample_interval_ms: int = 10, collect_samples: bool = False) -> None:
+    """
+    Start background thread to track peak RSS memory.
+
+    Args:
+        label: Unique identifier for this tracking session
+        sample_interval_ms: Sampling interval in milliseconds (default: 10)
+        collect_samples: If True, store all samples for later analysis
+
+    Raises:
+        ValueError: If label already active
+    """
+    if label in _active_peak_trackers:
+        raise ValueError(f"Label '{label}' is already active. Call MEMORY_PEAK_STOP('{label}') first.")
+
+    tracker = PeakMemoryTracker(
+        sample_interval_ms=sample_interval_ms,
+        collect_samples=collect_samples
+    )
+    tracker.start()
+    _active_peak_trackers[label] = tracker
+
+
+def MEMORY_PEAK_STOP(label: str) -> Dict[str, Any]:
+    """
+    Stop tracking and return results.
+
+    Args:
+        label: The label passed to MEMORY_PEAK_START
+
+    Returns:
+        {
+            "peak_mb": float,        # Peak above baseline in MB
+            "sample_count": int,     # Number of samples taken
+            "baseline_mb": float,    # Baseline RSS in MB
+            "peak_bytes": int        # Absolute peak RSS in bytes
+        }
+
+    Raises:
+        KeyError: If label not found in active trackers
+    """
+    if label not in _active_peak_trackers:
+        raise KeyError(f"Label '{label}' not found in active trackers.")
+
+    tracker = _active_peak_trackers.pop(label)
+    tracker.stop()
+
+    return {
+        "peak_mb": tracker.peak_mb,
+        "sample_count": tracker.sample_count,
+        "baseline_mb": tracker.baseline_bytes / (1024 * 1024),
+        "peak_bytes": tracker.peak_bytes,
+    }
+
+
+@contextmanager
+def MEMORY_PEAK_CONTEXT(label: str, sample_interval_ms: int = 10, collect_samples: bool = False):
+    """
+    Context manager for peak memory tracking.
+
+    Args:
+        label: Unique identifier for this tracking session
+        sample_interval_ms: Sampling interval in milliseconds
+        collect_samples: If True, store all samples
+
+    Yields:
+        PeakMemoryTracker: The tracker object (can access peak_mb, sample_count, etc.)
+
+    Example:
+        with MEMORY_PEAK_CONTEXT("kernel_run") as tracker:
+            result = expensive_function()
+        print(f"Peak: {tracker.peak_mb:.1f} MB over {tracker.sample_count} samples")
+    """
+    tracker = PeakMemoryTracker(
+        sample_interval_ms=sample_interval_ms,
+        collect_samples=collect_samples
+    )
+    tracker.start()
+    try:
+        yield tracker
+    finally:
+        tracker.stop()

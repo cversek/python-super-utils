@@ -27,10 +27,10 @@ def add_benchmark_parser(subparsers):
 
     parser.add_argument(
         'action',
-        choices=['list', 'list-tests', 'run'],
+        choices=['list', 'list-tests', 'run', 'run-tests'],
         nargs='?',
         default='run',
-        help='Action to perform (default: run)'
+        help='Action: list (project), list-tests (internal), run (project, default), run-tests (internal)'
     )
 
     parser.add_argument(
@@ -77,7 +77,9 @@ def handle_benchmark(args):
     elif args.action == 'list-tests':
         return _handle_list_internal(console, args)
     elif args.action == 'run':
-        return _handle_run(console, args)
+        return _handle_run_project(console, args)
+    elif args.action == 'run-tests':
+        return _handle_run_tests(console, args)
     else:
         console.print(f"[red]Unknown action: {args.action}[/red]")
         return 1
@@ -148,87 +150,101 @@ def _handle_list_project(console: Console, args):
     return 0
 
 
-def _handle_run(console: Console, args):
-    """Run benchmarks."""
-    from ..benchmarks import (
-        list_benchmarks, run_benchmarks, save_results,
-        discover_project_benchmarks, BENCHMARKS
-    )
+def _handle_run_project(console: Console, args):
+    """Run project benchmarks discovered in current directory."""
+    from ..benchmarks import discover_project_benchmarks, save_results
     from ..system_spec import get_system_spec
     from ..cython_optimizer import get_optimal_compile_args
 
-    console.print("[cyan]Running benchmarks...[/cyan]\n")
+    cwd = Path.cwd()
+    discovered = discover_project_benchmarks(cwd)
+
+    if not discovered:
+        console.print("[yellow]No project benchmarks found in current directory.[/yellow]")
+        console.print("\n[dim]Use 'superutils benchmark list' to see discovery details.[/dim]")
+        console.print("[dim]Use 'superutils benchmark run-tests' for internal benchmarks.[/dim]")
+        return 1
+
+    # Filter by class if specified
+    classes = args.benchmark_class.split(',') if args.benchmark_class else None
+    if classes:
+        discovered = {k: v for k, v in discovered.items() if k in classes}
+        if not discovered:
+            console.print(f"[red]No matching benchmarks found for: {args.benchmark_class}[/red]")
+            return 1
+
+    console.print(f"[cyan]Running {len(discovered)} project benchmark(s)...[/cyan]\n")
+
+    # Initialize results
+    spec = get_system_spec()
+    opts = get_optimal_compile_args(spec=spec, profile=args.profile)
+
+    results = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'system': {
+            'cpu': spec.get('hardware', {}).get('cpu_model', 'unknown'),
+            'cores': spec.get('hardware', {}).get('cpu_cores_logical', '?'),
+            'arch': spec.get('hardware', {}).get('architecture', 'unknown'),
+        },
+        'profile': args.profile,
+        'flags': opts.get('extra_compile_args', []),
+        'settings': {
+            'iterations': args.iterations,
+            'warmup': 3,
+            'size': args.size,
+        },
+        'results': {},
+        'errors': {},
+    }
+
+    # Run project benchmarks
+    for name, info in discovered.items():
+        try:
+            benchmark_cls = info['cls']
+            benchmark = benchmark_cls(size=args.size)
+            result = benchmark.benchmark(iterations=args.iterations, warmup=3)
+            result['source'] = 'project'
+            result['module_path'] = info.get('module_path', '')
+            results['results'][name] = result
+        except Exception as e:
+            results['errors'][name] = f"Error: {e}"
+
+    # Display results
+    _show_benchmark_results(console, results)
+
+    # Save to file if requested
+    if args.output:
+        try:
+            save_results(results, args.output)
+            console.print(f"\n[green]Results saved to: {args.output}[/green]")
+        except Exception as e:
+            console.print(f"\n[red]Failed to save results: {e}[/red]")
+            return 1
+
+    return 0
+
+
+def _handle_run_tests(console: Console, args):
+    """Run internal super_utils test benchmarks."""
+    from ..benchmarks import run_benchmarks, save_results
+
+    console.print("[cyan]Running internal test benchmarks...[/cyan]\n")
 
     # Split comma-separated benchmark classes
     classes = args.benchmark_class.split(',') if args.benchmark_class else None
 
-    # Check if any requested classes are project benchmarks
-    project_benchmarks = {}
-    if classes:
-        discovered = discover_project_benchmarks(Path.cwd())
-        for cls_name in classes:
-            if cls_name not in BENCHMARKS and cls_name in discovered:
-                project_benchmarks[cls_name] = discovered[cls_name]
-
     try:
-        # Determine which internal benchmarks to run
-        internal_classes = None
-        if classes:
-            internal_classes = [c for c in classes if c in BENCHMARKS]
-            if not internal_classes:
-                internal_classes = None
-
-        # Run internal benchmarks if any
-        if internal_classes or (classes is None and not project_benchmarks):
-            results = run_benchmarks(
-                classes=internal_classes,
-                iterations=args.iterations,
-                warmup=3,
-                size=args.size,
-                profile=args.profile,
-                include_system_info=True
-            )
-        else:
-            # Initialize empty results for project-only runs
-            spec = get_system_spec()
-            opts = get_optimal_compile_args(spec=spec, profile=args.profile)
-
-            results = {
-                'timestamp': datetime.datetime.now().isoformat(),
-                'system': {
-                    'cpu': spec.get('hardware', {}).get('cpu_model', 'unknown'),
-                    'cores': spec.get('hardware', {}).get('cpu_cores_logical', '?'),
-                    'arch': spec.get('hardware', {}).get('architecture', 'unknown'),
-                },
-                'profile': args.profile,
-                'flags': opts.get('extra_compile_args', []),
-                'settings': {
-                    'iterations': args.iterations,
-                    'warmup': 3,
-                    'size': args.size,
-                },
-                'results': {},
-                'errors': {},
-            }
-
-        # Run project benchmarks
-        for name, info in project_benchmarks.items():
-            try:
-                benchmark_cls = info['cls']
-                benchmark = benchmark_cls(size=args.size)
-                result = benchmark.benchmark(iterations=args.iterations, warmup=3)
-                result['source'] = 'project'
-                result['module_path'] = info.get('module_path', '')
-                results['results'][name] = result
-            except Exception as e:
-                if 'errors' not in results:
-                    results['errors'] = {}
-                results['errors'][name] = f"Error: {e}"
-
+        results = run_benchmarks(
+            classes=classes,
+            iterations=args.iterations,
+            warmup=3,
+            size=args.size,
+            profile=args.profile,
+            include_system_info=True
+        )
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
-        console.print("\nUse 'superutils benchmark list' to discover project benchmarks")
-        console.print("Use 'superutils benchmark list-tests' for internal benchmarks")
+        console.print("\nUse 'superutils benchmark list-tests' to see available benchmarks")
         return 1
     except ImportError as e:
         console.print(f"[red]Missing dependency: {e}[/red]")
@@ -310,8 +326,7 @@ def _show_benchmark_results(console: Console, results: dict):
         table.add_column("Type", style="yellow", width=14)
         table.add_column("Mean (ms)", justify="right", style="green", width=10)
         table.add_column("Std (ms)", justify="right", style="white", width=8)
-        table.add_column("Min (ms)", justify="right", style="white", width=10)
-        table.add_column("Max (ms)", justify="right", style="white", width=10)
+        table.add_column("Peak MB", justify="right", style="blue", width=8)
         table.add_column("Speedup", justify="right", style="magenta", width=8)
         table.add_column("Valid", justify="center")
 
@@ -348,13 +363,16 @@ def _show_benchmark_results(console: Console, results: dict):
                         else:
                             speedup = "-"
 
+                        # Memory column (N/A if not available)
+                        peak_mb = result.get('run_peak_mb')
+                        peak_str = f"{peak_mb:.1f}" if peak_mb is not None else "N/A"
+
                         table.add_row(
                             name,
                             result.get('workload_type', '?'),
                             f"{mean_ms:.2f}",
                             f"{result.get('std_ms', 0):.2f}",
-                            f"{result.get('min_ms', 0):.2f}",
-                            f"{result.get('max_ms', 0):.2f}",
+                            peak_str,
                             speedup,
                             valid_mark
                         )
@@ -364,13 +382,14 @@ def _show_benchmark_results(console: Console, results: dict):
             if name not in added:
                 valid_mark = "[green]✓[/green]" if result.get('valid') else "[red]✗[/red]"
                 source_marker = " [dim](project)[/dim]" if result.get('source') == 'project' else ""
+                peak_mb = result.get('run_peak_mb')
+                peak_str = f"{peak_mb:.1f}" if peak_mb is not None else "N/A"
                 table.add_row(
                     name + source_marker,
                     result.get('workload_type', '?'),
                     f"{result.get('mean_ms', 0):.2f}",
                     f"{result.get('std_ms', 0):.2f}",
-                    f"{result.get('min_ms', 0):.2f}",
-                    f"{result.get('max_ms', 0):.2f}",
+                    peak_str,
                     "-",
                     valid_mark
                 )

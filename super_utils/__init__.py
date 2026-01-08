@@ -38,4 +38,5 @@ from .system_spec import (
     get_numpy_spec,
     print_system_report,
     export_system_spec,
+    detect_performance_cores,
 )

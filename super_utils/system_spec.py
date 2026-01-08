@@ -245,6 +245,103 @@ def get_apple_silicon_info() -> Optional[Dict[str, Any]]:
     return info
 
 
+def detect_performance_cores() -> Dict[str, Any]:
+    """
+    Detect Performance (P) and Efficiency (E) core counts on heterogeneous CPUs.
+
+    Supports:
+    - Apple Silicon (M1/M2/M3/M4) via sysctl
+    - Intel hybrid (Alder Lake+) via frequency grouping
+    - Linux ARM big.LITTLE via frequency grouping
+
+    Environment variable override:
+        NEUROVEP_P_CORES=12  # Force specific P-core count (useful in containers)
+
+    Returns:
+        Dict with keys:
+            - performance_cores: Number of P-cores (or total if homogeneous)
+            - efficiency_cores: Number of E-cores (0 if homogeneous)
+            - is_hybrid: True if heterogeneous architecture detected
+            - detection_method: How cores were detected
+
+    Example:
+        >>> info = detect_performance_cores()
+        >>> print(f"{info['performance_cores']}P + {info['efficiency_cores']}E")
+        12P + 4E  # Apple M3 Max
+    """
+    result = {
+        "performance_cores": None,
+        "efficiency_cores": 0,
+        "is_hybrid": False,
+        "detection_method": "fallback",
+    }
+
+    # Check environment variable override first
+    env_p_cores = os.environ.get('NEUROVEP_P_CORES')
+    if env_p_cores:
+        try:
+            p_cores = int(env_p_cores)
+            if p_cores > 0:
+                result["performance_cores"] = p_cores
+                result["efficiency_cores"] = max(0, (os.cpu_count() or p_cores) - p_cores)
+                result["is_hybrid"] = result["efficiency_cores"] > 0
+                result["detection_method"] = "env_override"
+                return result
+        except ValueError:
+            pass  # Invalid value, continue with auto-detection
+
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS: Use sysctl for Apple Silicon P/E cores
+        perf = _run_sysctl('hw.perflevel0.physicalcpu')
+        eff = _run_sysctl('hw.perflevel1.physicalcpu')
+
+        if perf:
+            result["performance_cores"] = int(perf)
+            result["efficiency_cores"] = int(eff) if eff else 0
+            result["is_hybrid"] = result["efficiency_cores"] > 0
+            result["detection_method"] = "macos_sysctl"
+            return result
+
+    elif system == "Linux":
+        # Linux: Detect heterogeneous cores by frequency grouping
+        try:
+            freqs = []
+            cpu_id = 0
+            while True:
+                freq_path = f"/sys/devices/system/cpu/cpu{cpu_id}/cpufreq/scaling_max_freq"
+                if not os.path.exists(freq_path):
+                    break
+                with open(freq_path) as f:
+                    freqs.append(int(f.read().strip()))
+                cpu_id += 1
+
+            if freqs and len(set(freqs)) > 1:
+                # Heterogeneous: P-cores have highest frequency
+                max_freq = max(freqs)
+                p_cores = sum(1 for f in freqs if f == max_freq)
+                e_cores = len(freqs) - p_cores
+
+                result["performance_cores"] = p_cores
+                result["efficiency_cores"] = e_cores
+                result["is_hybrid"] = True
+                result["detection_method"] = "linux_freq_grouping"
+                return result
+            elif freqs:
+                # Homogeneous: all cores are "performance"
+                result["performance_cores"] = len(freqs)
+                result["detection_method"] = "linux_homogeneous"
+                return result
+        except (IOError, ValueError):
+            pass
+
+    # Fallback: use total CPU count as P-cores
+    result["performance_cores"] = os.cpu_count() or 1
+    result["detection_method"] = "fallback"
+    return result
+
+
 def _parse_lscpu() -> Dict[str, Any]:
     """
     Parse lscpu output for detailed CPU topology (Linux).

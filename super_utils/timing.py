@@ -21,7 +21,6 @@ import os
 import time
 import json
 import inspect
-import threading
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
@@ -30,51 +29,15 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from .memory import MEMORY_SNAPSHOT, MEMORY_DELTA, _format_bytes, _get_rss_bytes
-
-
-class _PeakRSSTracker:
-    """Background thread that samples RSS to capture peak memory usage."""
-
-    def __init__(self, sample_interval_ms: int = 1):
-        self.sample_interval = sample_interval_ms / 1000.0
-        self.baseline_rss = 0
-        self.peak_rss = 0
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-
-    def start(self):
-        """Start tracking RSS in background."""
-        self.baseline_rss = _get_rss_bytes()
-        self.peak_rss = self.baseline_rss
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._sample_loop, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> int:
-        """Stop tracking and return peak RSS above baseline."""
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=1.0)
-        # Final sample to catch peak at end
-        final_rss = _get_rss_bytes()
-        if final_rss > self.peak_rss:
-            self.peak_rss = final_rss
-        return self.peak_rss - self.baseline_rss
-
-    def _sample_loop(self):
-        """Sample RSS until stop event."""
-        while not self._stop_event.is_set():
-            current_rss = _get_rss_bytes()
-            if current_rss > self.peak_rss:
-                self.peak_rss = current_rss
-            self._stop_event.wait(self.sample_interval)
+from .memory import (
+    MEMORY_SNAPSHOT, MEMORY_DELTA, _format_bytes, _get_rss_bytes,
+    MEMORY_PEAK_START, MEMORY_PEAK_STOP
+)
 
 
 # Module-level state
 _timing_records: List[Dict[str, Any]] = []
 _active_timers: Dict[str, Dict[str, Any]] = {}
-_active_peak_trackers: Dict[str, _PeakRSSTracker] = {}
 _max_records: int = 1000
 _timing_enabled: bool = True
 
@@ -135,9 +98,8 @@ def TIMING_START(label: str, description: Optional[str] = None, track_peak: bool
     }
 
     if track_peak:
-        tracker = _PeakRSSTracker(sample_interval_ms=10)
-        tracker.start()
-        _active_peak_trackers[label] = tracker
+        # Use memory.py's threaded peak tracker
+        MEMORY_PEAK_START(f"_timing_{label}", sample_interval_ms=10)
 
     return label
 
@@ -176,9 +138,12 @@ def TIMING_END(label: str, print_result: bool = True) -> Optional[Dict[str, Any]
 
     # Capture peak RSS if tracking was enabled
     memory_peak = None
-    if label in _active_peak_trackers:
-        tracker = _active_peak_trackers.pop(label)
-        memory_peak = tracker.stop()
+    if start_data.get('track_peak'):
+        try:
+            peak_result = MEMORY_PEAK_STOP(f"_timing_{label}")
+            memory_peak = int(peak_result['peak_mb'] * 1024 * 1024)  # Convert MB to bytes
+        except KeyError:
+            pass  # Tracker not found, ignore
 
     frame = inspect.currentframe().f_back
     info = inspect.getframeinfo(frame)
